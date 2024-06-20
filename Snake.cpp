@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <chrono>
 #include <list>
+#include <random>
 
 enum Direction {
     UP = 0,
@@ -15,16 +16,16 @@ enum Direction {
 
 class Pos {
 public:
-    int x;
-    int y;
+    UINT x;
+    UINT y;
 };
 
 struct GameState {
     bool gracePeriod = false;
     bool exiting = false;
-    int game_tick_length;
+    LONGLONG game_tick_length;
     Pos fruit_pos = Pos{};
-    std::list <Pos> snake_pos = {};
+    std::list<Pos> snake_pos = {};
 
     Direction current_direction = Direction::RIGHT;
     bool has_buffered_keypress = false;
@@ -34,33 +35,48 @@ struct GameState {
     LONGLONG next_tick = 0;
     LONGLONG last_paint = 0;
     Pos grid_nudge;
-    int height_px;
-    int width_px;
-    int height_tiles = 16;
-    int width_tiles = 16;
+    UINT height_px;
+    UINT width_px;
+    UINT height_tiles = 32;
+    UINT width_tiles = 32;
 
-    int tile_height;
-    int tile_width;
+    UINT tile_height;
+    UINT tile_width;
 
     HPEN pen_snake;
     HPEN pen_fruit;
     HPEN pen_border;
     HBRUSH brush_background;
+
+    std::uniform_real_distribution<> random = std::uniform_real_distribution<>(0.0, 1.0);
+    std::mt19937 random_engine = ([]() -> auto {
+        std::random_device rd;
+        return std::mt19937(rd());
+    })();
 };
 
 void randomise_fruit_pos(GameState *gState) {
-    gState->fruit_pos.y = rand() % (gState->height_tiles-1) + 1;
-    gState->fruit_pos.x = rand() % (gState->width_tiles-1) + 1;
-    for (auto snek:gState->snake_pos) {
-        if(gState->fruit_pos.y == snek.y && gState->fruit_pos.x == snek.x) {
-            // note: this will cause a stack overflow if someone manages to fill every tile of the board with snek... I'm not going to consider this a problem...
-            randomise_fruit_pos(gState);
+    bool overlap = true;
+    int iter = 0;
+    while (overlap) {
+        iter++;
+        gState->fruit_pos.y = UINT(floor(gState->random(gState->random_engine) * (gState->height_tiles - 1))) + 1;
+        gState->fruit_pos.x = UINT(floor(gState->random(gState->random_engine) * (gState->width_tiles - 1))) + 1;
+        overlap = false;
+        for (auto snake: gState->snake_pos) {
+            if (gState->fruit_pos.y == snake.y && gState->fruit_pos.x == snake.x) {
+                overlap = true;
+                break;
+            }
+        }
+        if(iter > 32) {
+            return;
         }
     }
 }
 
 void reset_game(GameState *gState) {
-    gState->snake_pos = {Pos{.x = 6, .y = 4},Pos{.x = 5, .y = 4}, Pos{.x = 4, .y = 4}};
+    gState->snake_pos = {Pos{.x = 6, .y = 4}, Pos{.x = 5, .y = 4}, Pos{.x = 4, .y = 4}};
     gState->current_direction = Direction::RIGHT;
     gState->game_tick_length = 250000000;
     gState->has_buffered_keypress = false;
@@ -81,22 +97,22 @@ void store_state(LPARAM lParam, HWND hwnd) {
     SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR) pState);
 }
 
-void draw_snake(GameState *gState, HDC hdc, PAINTSTRUCT ps) {
+void draw_snake(GameState *gState, HDC hdc) {
     SelectObject(hdc, gState->pen_snake);
     auto drawPos = grid_pos_to_px(gState, gState->snake_pos.front());
-    MoveToEx(hdc, drawPos.x, drawPos.y, nullptr);
+    MoveToEx(hdc, int(drawPos.x), int(drawPos.y), nullptr);
 
     for (auto pos: gState->snake_pos) {
         drawPos = grid_pos_to_px(gState, pos);
-        LineTo(hdc, drawPos.x, drawPos.y);
+        LineTo(hdc, int(drawPos.x), int(drawPos.y));
     }
 }
 
-void draw_fruit(GameState *gState, HDC hdc, PAINTSTRUCT ps) {
+void draw_fruit(GameState *gState, HDC hdc) {
     SelectObject(hdc, gState->pen_fruit);
     auto drawPos = grid_pos_to_px(gState, gState->fruit_pos);
-    MoveToEx(hdc, drawPos.x, drawPos.y, nullptr);
-    LineTo(hdc, drawPos.x, drawPos.y);
+    MoveToEx(hdc, int(drawPos.x), int(drawPos.y), nullptr);
+    LineTo(hdc, int(drawPos.x), int(drawPos.y));
 }
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -114,16 +130,16 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
             gState->tile_width = width / gState->width_tiles;
             gState->tile_height = height / gState->height_tiles;
 
-            int tile_inner_size;
+            UINT tile_inner_size;
             if (gState->tile_height > gState->tile_width) {
                 tile_inner_size = gState->tile_width - (gState->tile_width / 10);
             } else {
                 tile_inner_size = gState->tile_height - (gState->tile_height / 10);
             }
 
-            gState->pen_snake = CreatePen(PS_SOLID, tile_inner_size, RGB (255, 255, 255));
-            gState->pen_fruit = CreatePen(PS_SOLID, tile_inner_size + 10, RGB (255, 0, 0));
-            gState->pen_border = CreatePen(PS_SOLID, tile_inner_size, RGB (150, 150, 150));
+            gState->pen_snake = CreatePen(PS_SOLID, int(tile_inner_size), RGB (255, 255, 255));
+            gState->pen_fruit = CreatePen(PS_SOLID, int(tile_inner_size + (tile_inner_size / 20)), RGB (255, 0, 0));
+            gState->pen_border = CreatePen(PS_SOLID, int(tile_inner_size), RGB (150, 150, 150));
             return 0;
         }
         case WM_KEYDOWN: {
@@ -159,11 +175,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     return 0;
             }
 
-            if(gState->has_buffered_keypress) {
+            if (gState->has_buffered_keypress) {
                 return 0;
             }
 
-            if(gState->next_keypress_buffers) {
+            if (gState->next_keypress_buffers) {
                 gState->buffered_keypress = keypress;
                 gState->has_buffered_keypress = true;
                 return 0;
@@ -200,10 +216,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
 
             SelectObject(hdc, gState->brush_background);
             SelectObject(hdc, gState->pen_border);
-            Rectangle(hdc, 0, 0, gState->width_px, gState->height_px);
+            Rectangle(hdc, 0, 0, int(gState->width_px), int(gState->height_px));
 
-            draw_snake(gState, hdc, ps);
-            draw_fruit(gState, hdc, ps);
+            draw_snake(gState, hdc);
+            draw_fruit(gState, hdc);
             EndPaint(hwnd, &ps);
             return 0;
         }
@@ -235,7 +251,7 @@ void do_gametic(GameState *gState) {
     }
 
     if (newPos.x >= gState->width_tiles || newPos.y >= gState->height_tiles || newPos.x <= 0 || newPos.y <= 0) {
-        if(!gState->gracePeriod) {
+        if (!gState->gracePeriod) {
             gState->gracePeriod = true;
             return;
         }
@@ -245,7 +261,7 @@ void do_gametic(GameState *gState) {
 
     for (auto snakeBody: gState->snake_pos) {
         if (newPos.x == snakeBody.x && newPos.y == snakeBody.y) {
-            if(!gState->gracePeriod) {
+            if (!gState->gracePeriod) {
                 gState->gracePeriod = true;
                 return;
             }
@@ -257,7 +273,7 @@ void do_gametic(GameState *gState) {
     gState->gracePeriod = false;
     gState->next_keypress_buffers = false;
 
-    if(gState->has_buffered_keypress) {
+    if (gState->has_buffered_keypress) {
         gState->current_direction = gState->buffered_keypress;
         gState->has_buffered_keypress = false;
     }
@@ -290,6 +306,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     // Create the window.
 
+
     HWND window_handle = CreateWindowEx(
             0,                              // Optional window styles.
             CLASS_NAME,                     // Window class
@@ -309,6 +326,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 0;
     }
 
+
     {
         LONGLONG now = (std::chrono::system_clock::now().time_since_epoch().count());
         gState->next_tick = now + 1000;
@@ -325,16 +343,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     gState->tile_height = gState->height_px / gState->height_tiles;
     gState->tile_width = gState->width_px / gState->width_tiles;
 
-    int tile_inner_size;
+    UINT tile_inner_size;
     if (gState->tile_height > gState->tile_width) {
         tile_inner_size = gState->tile_width - (gState->tile_width / 10);
     } else {
         tile_inner_size = gState->tile_height - (gState->tile_height / 10);
     }
 
-    gState->pen_snake = CreatePen(PS_SOLID, tile_inner_size, RGB (255, 255, 255));
-    gState->pen_fruit = CreatePen(PS_SOLID, tile_inner_size + 10, RGB (255, 0, 0));
-    gState->pen_border = CreatePen(PS_SOLID, tile_inner_size, RGB (150, 150, 150));
+    gState->pen_snake = CreatePen(PS_SOLID, int(tile_inner_size), RGB (255, 255, 255));
+    gState->pen_fruit = CreatePen(PS_SOLID, int(tile_inner_size) + 10, RGB (255, 0, 0));
+    gState->pen_border = CreatePen(PS_SOLID, int(tile_inner_size), RGB (150, 150, 150));
     gState->brush_background = CreateSolidBrush(RGB(20, 20, 20));
 
     ShowWindow(window_handle, 10);
@@ -352,15 +370,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         } else {
             LONGLONG now = (std::chrono::system_clock::now().time_since_epoch().count());
             if (gState->next_tick < now) {
-                if(gState->exiting) {
+                if (gState->exiting) {
                     return 0;
                 }
                 do_gametic(gState);
                 InvalidateRect(window_handle, nullptr, FALSE);
                 gState->next_tick = now + gState->game_tick_length;
-                gState -> game_tick_length = gState->game_tick_length * 0.999;
+                gState->game_tick_length = gState->game_tick_length * LONGLONG(0.999);
             } else {
-                Sleep(10);
+                Sleep(100);
             }
         }
     }
